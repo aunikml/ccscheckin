@@ -12,8 +12,16 @@ class Participant(models.Model):
 
     summit_id = models.CharField(max_length=30, unique=True, db_index=True)
     name = models.CharField(max_length=255, default='', blank=True, help_text='Participant Name')
-    email = models.EmailField(unique=True, db_index=True)
+    email = models.EmailField(db_index=True)
     mobile = models.CharField(max_length=100, blank=True, help_text='Mobile / Phone Number')
+    source_key = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Stable identifier for the originating Google Sheet row'
+    )
 
     guest_type = models.CharField(
         max_length=100,
@@ -237,3 +245,51 @@ class SyncHistory(models.Model):
 
     def __str__(self):
         return f"Sync on {self.started_at.strftime('%Y-%m-%d %H:%M:%S')} - {self.status} (+{self.new_added})"
+
+
+class InvitedGuest(models.Model):
+    """
+    Reference list of invited guests to whom invitations were sent.
+    Admin-only visibility.
+    """
+    name = models.CharField(max_length=255, blank=True, default='')
+    number = models.CharField(max_length=100, blank=True, default='', verbose_name='Phone / Mobile')
+    email = models.CharField(max_length=255, blank=True, default='', db_index=True)
+    cohort = models.CharField(max_length=255, blank=True, default='', db_index=True)
+    session = models.CharField(max_length=255, blank=True, default='', db_index=True)
+    source_row = models.IntegerField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['id']
+        verbose_name = 'Invited Guest'
+        verbose_name_plural = 'Invited Guests'
+
+    def __str__(self):
+        return f"{self.name} <{self.email}>"
+
+
+class InvitedGuestConfig(models.Model):
+    """
+    Configuration for the Invited Guests Google Sheet.
+    """
+    DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1gByjGuQpWdbyBE5ucxEHVKsP07G5ZL6LgSZLVxcYP80/edit?usp=sharing'
+
+    sheet_url = models.CharField(max_length=500, default=DEFAULT_SHEET_URL)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_sync_status = models.CharField(max_length=30, default='IDLE')
+    last_sync_message = models.TextField(blank=True)
+    total_records = models.IntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def get_config(cls):
+        obj, _ = cls.objects.get_or_create(id=1, defaults={'sheet_url': cls.DEFAULT_SHEET_URL})
+        return obj
+
+    def __str__(self):
+        return f"Invited Guests Sheet Config ({self.total_records} records)"

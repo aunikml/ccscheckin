@@ -124,9 +124,9 @@ class UserManagementAndRbacTests(TestCase):
         res_del = self.client.delete(f'/api/participants/{self.participant.id}/')
         self.assertEqual(res_del.status_code, status.HTTP_403_FORBIDDEN)
 
-        # CANNOT export full CSV
+        # CAN export full CSV
         res_exp = self.client.get('/api/participants/export_csv/')
-        self.assertEqual(res_exp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(res_exp.status_code, status.HTTP_200_OK)
 
     def test_viewer_can_only_see_dashboard_stats(self):
         self.client.force_authenticate(user=self.viewer)

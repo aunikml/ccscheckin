@@ -8,7 +8,6 @@ import {
   Typography,
   Alert,
   CircularProgress,
-  Chip,
 } from '@mui/material';
 import SecurityIcon from '@mui/icons-material/Security';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
@@ -144,46 +143,6 @@ export const Login = () => {
                 bgcolor: '#ffffff',
               }}
             >
-              {/* Partner Chips Header */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-                  <Chip
-                    label="SYNERGOS"
-                    size="small"
-                    sx={{
-                      bgcolor: 'rgba(30, 130, 76, 0.08)',
-                      color: '#1e824c',
-                      fontWeight: 800,
-                      fontSize: '0.65rem',
-                      height: 20,
-                      border: '1px solid rgba(30, 130, 76, 0.25)',
-                    }}
-                  />
-                  <Chip
-                    label="BRAC IED"
-                    size="small"
-                    sx={{
-                      bgcolor: 'rgba(217, 119, 6, 0.08)',
-                      color: '#d97706',
-                      fontWeight: 800,
-                      fontSize: '0.65rem',
-                      height: 20,
-                      border: '1px solid rgba(217, 119, 6, 0.25)',
-                    }}
-                  />
-                  <Chip
-                    label="BRAC"
-                    size="small"
-                    sx={{
-                      bgcolor: 'rgba(209, 27, 109, 0.08)',
-                      color: '#d11b6d',
-                      fontWeight: 800,
-                      fontSize: '0.65rem',
-                      height: 20,
-                      border: '1px solid rgba(209, 27, 109, 0.25)',
-                    }}
-                  />
-                </Box>
-
               {/* Form Title & Description */}
               <Box sx={{ mb: 2 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, mb: 0.5 }}>

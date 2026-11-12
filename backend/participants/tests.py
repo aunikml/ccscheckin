@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from authentication.models import User
 from .models import Participant, GoogleSheetConfig
+from .sheet_sync import sync_participants_from_rows
 
 class ParticipantModelTests(TestCase):
     def setUp(self):
@@ -155,3 +156,205 @@ class ParticipantModelTests(TestCase):
         self.assertEqual(checkin_res2.status_code, status.HTTP_200_OK)
         self.assertTrue(checkin_res2.data['already_checked_in'])
         self.assertIn('already checked in', checkin_res2.data['message'].lower())
+
+    def test_search_lookup_includes_all_participants_sharing_email(self):
+        primary = Participant.objects.create(
+            name='Tasmia Rahman',
+            email='tasmia@example.com',
+            mobile='01999999999',
+            guest_type='VIP',
+        )
+        sibling = Participant.objects.create(
+            name='Sibling Attendee',
+            email='tasmia@example.com',
+            mobile='01888888888',
+            guest_type='Guest',
+        )
+
+        response = self.client.get('/api/participants/search_lookup/?q=Tasmia Rahman')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        returned_ids = {row['id'] for row in response.data}
+        self.assertIn(primary.id, returned_ids)
+        self.assertIn(sibling.id, returned_ids)
+
+    def test_search_lookup_includes_all_participants_sharing_phone(self):
+        primary = Participant.objects.create(
+            name='Phone Owner',
+            email='owner@example.com',
+            mobile='01712345678',
+            guest_type='VIP',
+        )
+        sibling = Participant.objects.create(
+            name='Shared Phone Attendee',
+            email='shared@example.com',
+            mobile='01712345678',
+            guest_type='Guest',
+        )
+
+        response = self.client.get('/api/participants/search_lookup/?q=01712345678')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        returned_ids = {row['id'] for row in response.data}
+        self.assertIn(primary.id, returned_ids)
+        self.assertIn(sibling.id, returned_ids)
+
+    def test_search_lookup_by_email_does_not_pull_in_unrelated_phone_siblings(self):
+        primary = Participant.objects.create(
+            name='Muhtashim Uddin Ahmed',
+            email='muhtashim.uddin@bracu.ac.bd',
+            mobile='01798598882',
+            guest_type='VIP',
+        )
+        duplicate_email = Participant.objects.create(
+            name='Nazmun Naher',
+            email='muhtashim.uddin@bracu.ac.bd',
+            mobile='01703225099',
+            guest_type='Guest',
+        )
+        # Unrelated attendee who happens to have the coordinator's phone number
+        unrelated_vip = Participant.objects.create(
+            name='Professor Syed Ferhat Anwar',
+            email='vc@bracu.ac.bd',
+            mobile='01798598882',
+            guest_type='VIP',
+        )
+
+        response = self.client.get('/api/participants/search_lookup/?q=muhtashim.uddin@bracu.ac.bd')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        returned_ids = {row['id'] for row in response.data}
+        self.assertEqual(len(returned_ids), 2)
+        self.assertIn(primary.id, returned_ids)
+        self.assertIn(duplicate_email.id, returned_ids)
+        self.assertNotIn(unrelated_vip.id, returned_ids)
+
+    def test_fast_checkin_returns_all_matches_for_duplicate_email(self):
+        primary = Participant.objects.create(
+            name='Tasmia Rahman',
+            email='tasmia@example.com',
+            mobile='01999999999',
+            guest_type='VIP',
+        )
+        sibling = Participant.objects.create(
+            name='Sibling Attendee',
+            email='tasmia@example.com',
+            mobile='01888888888',
+            guest_type='Guest',
+        )
+
+        response = self.client.post('/api/participants/fast_checkin/', {
+            'query': 'tasmia@example.com',
+            'day': '1',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(len(response.data['matches']), 2)
+        returned_ids = {row['id'] for row in response.data['matches']}
+        self.assertEqual(returned_ids, {primary.id, sibling.id})
+
+        primary.refresh_from_db()
+        sibling.refresh_from_db()
+        self.assertFalse(primary.day1_checked_in)
+        self.assertFalse(sibling.day1_checked_in)
+
+    def test_sheet_sync_allows_duplicate_emails_and_is_idempotent(self):
+        config = GoogleSheetConfig.get_default_config()
+        rows = [
+            {
+                'Name': 'Group Member One',
+                'Email': 'group@example.com',
+                'Mobile': '01711111111',
+                'Guest Type': 'Guest',
+                'Session': 'Day 1 Session 1',
+            },
+            {
+                'Name': 'Group Member Two',
+                'Email': 'group@example.com',
+                'Mobile': '01722222222',
+                'Guest Type': 'Guest',
+                'Session': 'Day 2 Session 1',
+            },
+        ]
+
+        first = sync_participants_from_rows(rows, config, triggered_by='test')
+        self.assertEqual(first['new_added'], 2)
+        self.assertEqual(
+            Participant.objects.filter(email='group@example.com').count(), 2
+        )
+
+        second = sync_participants_from_rows(rows, config, triggered_by='test')
+        self.assertEqual(second['new_added'], 0)
+        self.assertEqual(second['updated'], 2)
+        self.assertEqual(
+            Participant.objects.filter(email='group@example.com').count(), 2
+        )
+
+    def test_sheet_sync_preserves_exact_duplicate_rows(self):
+        config = GoogleSheetConfig.get_default_config()
+        rows = [
+            {
+                'Name': 'Same Person',
+                'Email': 'same@example.com',
+                'Mobile': '01711111111',
+                'Time of Registration': '1-Nov-2026',
+                'Guest Type': 'Guest',
+                'Session': 'Day 1 Session 1',
+            },
+            {
+                'Name': 'Same Person',
+                'Email': 'same@example.com',
+                'Mobile': '01711111111',
+                'Time of Registration': '9-Nov-2026',
+                'Guest Type': 'Guest',
+                'Session': 'Day 1 Session 1',
+            },
+        ]
+
+        first = sync_participants_from_rows(
+            rows, config, triggered_by='test', source_id='sheet-x'
+        )
+        self.assertEqual(first['new_added'], 2)
+        self.assertEqual(
+            Participant.objects.filter(email='same@example.com').count(), 2
+        )
+
+        second = sync_participants_from_rows(
+            rows, config, triggered_by='test', source_id='sheet-x'
+        )
+        self.assertEqual(second['new_added'], 0)
+        self.assertEqual(second['updated'], 2)
+        self.assertEqual(
+            Participant.objects.filter(email='same@example.com').count(), 2
+        )
+
+    def test_sheet_sync_updates_email_and_confirmation_status(self):
+        config = GoogleSheetConfig.get_default_config()
+        rows = [{
+            'Name': 'Mohammad Mahboob Morshed',
+            'Email': 'old.email@example.com',
+            'Mobile': '01767903624',
+            'Guest Type': 'Guest',
+            'Confirmation': 'Yes',
+            'Session': 'Day 1 Session 1',
+        }]
+
+        sync_participants_from_rows(
+            rows, config, triggered_by='test', source_id='sheet-email'
+        )
+        participant = Participant.objects.get(source_key='sheet-email:Form Responses 1:1')
+        self.assertEqual(participant.email, 'old.email@example.com')
+        self.assertEqual(participant.status, 'CONFIRMED')
+
+        rows[0]['Email'] = 'mahboob.morshed@du.ac.bd'
+        rows[0]['Confirmation'] = 'No'
+        result = sync_participants_from_rows(
+            rows, config, triggered_by='test', source_id='sheet-email'
+        )
+
+        self.assertEqual(result['updated'], 1)
+        participant.refresh_from_db()
+        self.assertEqual(participant.name, 'Mohammad Mahboob Morshed')
+        self.assertEqual(participant.email, 'mahboob.morshed@du.ac.bd')
+        self.assertEqual(participant.confirmation, 'No')
+        self.assertEqual(participant.status, 'CANCELLED')

@@ -99,7 +99,7 @@ The system synchronizes responses submitted to your Google Form spreadsheet:
 7. Click **"Pull Live From Sheet"** to ingest registrations immediately!
 
 ### Idempotency & Upserting:
-- Syncing matches participants by **Email Address**.
+- Syncing matches participants by **Email Address + Name**, so multiple attendees can share the same email without being merged or rejected.
 - New rows are added with auto-generated Summit IDs (`NCCS-2026-0001`, `NCCS-2026-0002`...).
 - Existing rows are updated with any new edits without duplicating records.
 - If you don't have an active external Google Sheet yet, click **"Load Sample Form Data"** in the UI to immediately load 8 realistic summit registrations (Speakers, VIPs, Delegates, Healthcare Specialists, NGOs) to explore all features.

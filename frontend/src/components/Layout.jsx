@@ -26,6 +26,7 @@ import {
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import PeopleIcon from '@mui/icons-material/People';
+import HowToRegIcon from '@mui/icons-material/HowToReg';
 import SyncIcon from '@mui/icons-material/Sync';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import SecurityIcon from '@mui/icons-material/Security';
@@ -34,6 +35,7 @@ import ChildCareIcon from '@mui/icons-material/ChildCare';
 import MenuIcon from '@mui/icons-material/Menu';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
+import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { syncService } from '../services/api';
@@ -74,7 +76,9 @@ export const Layout = () => {
   const navItems = [
     { label: 'Dashboard', path: '/dashboard', icon: <DashboardIcon />, visible: true },
     { label: 'Participant Directory', path: '/participants', icon: <PeopleIcon />, visible: canAccessParticipants },
+    { label: 'Day 1 & Day 2 Check-ins', path: '/checkins', icon: <HowToRegIcon />, visible: canAccessParticipants },
     { label: 'Google Form Sync', path: '/sync', icon: <SyncIcon />, visible: canSyncSheet },
+    { label: 'Invited Guests', path: '/invited-guests', icon: <MarkEmailReadIcon />, visible: isAdmin },
     { label: 'User Management', path: '/users', icon: <ManageAccountsIcon />, visible: canManageUsers },
   ].filter((item) => item.visible);
 

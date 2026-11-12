@@ -133,8 +133,9 @@ export const Dashboard = () => {
   };
 
   const handleCreateParticipant = async (formData) => {
-    await participantsService.create(formData);
+    const saved = await participantsService.create(formData);
     await fetchDashboardData();
+    return saved;
   };
 
   if (loading) {
@@ -156,6 +157,23 @@ export const Dashboard = () => {
   const day2Rate = stats?.session_insights?.checkin_summary?.day2_rate ?? (day2Total > 0 ? Math.round((day2CheckedIn / day2Total) * 100) : 0);
   const bothDaysRate = bothDaysTotal > 0 ? Math.round((bothDaysCheckedIn / bothDaysTotal) * 100) : 0;
 
+  const CONFIRMATION_META = {
+    yes: { label: 'Confirmed', color: '#10b981' },
+    maybe: { label: 'Maybe', color: '#f59e0b' },
+    no: { label: 'Cancelled / No', color: '#ef4444' },
+  };
+
+  const confirmationBreakdown = (stats?.confirmations || [])
+    .filter((item) => item.count > 0)
+    .map((item) => {
+      const key = (item.confirmation || '').trim().toLowerCase();
+      const meta = CONFIRMATION_META[key] || {
+        label: item.confirmation || 'Not specified',
+        color: '#64748b',
+      };
+      return { label: meta.label, value: item.count, color: meta.color };
+    });
+
   const kpis = [
     {
       label: 'Total Registered',
@@ -163,6 +181,7 @@ export const Dashboard = () => {
       icon: <PeopleIcon sx={{ fontSize: 32, color: '#50153f' }} />,
       bg: 'rgba(80, 21, 63, 0.08)',
       detail: `${day1Total} Day 1 • ${day2Total} Day 2 registered`,
+      breakdown: confirmationBreakdown,
     },
     {
       label: 'Day 1 Checked In',
@@ -334,6 +353,25 @@ export const Dashboard = () => {
                         sx={{ height: 6, borderRadius: 3, bgcolor: '#e2e8f0', '& .MuiLinearProgress-bar': { bgcolor: kpi.barColor || '#10b981' } }}
                       />
                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.8, fontSize: '0.72rem' }}>
+                        {kpi.detail}
+                      </Typography>
+                    </Box>
+                  ) : kpi.breakdown?.length > 0 ? (
+                    <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.6 }}>
+                      {kpi.breakdown.map((item) => (
+                        <Box key={item.label} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.7 }}>
+                            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: item.color }} />
+                            <Typography variant="caption" color="text.secondary">
+                              {item.label}
+                            </Typography>
+                          </Box>
+                          <Typography variant="caption" fontWeight="800" sx={{ color: item.color }}>
+                            {item.value}
+                          </Typography>
+                        </Box>
+                      ))}
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.3, fontSize: '0.7rem' }}>
                         {kpi.detail}
                       </Typography>
                     </Box>
@@ -833,6 +871,10 @@ export const Dashboard = () => {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onSave={handleCreateParticipant}
+        onPrintBadge={(p) => {
+          setCreateOpen(false);
+          setSelectedBadgeParticipant(p);
+        }}
       />
 
       {/* Badge Modal */}

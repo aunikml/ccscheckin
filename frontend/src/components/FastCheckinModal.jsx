@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -23,6 +23,7 @@ import {
   Avatar,
   IconButton,
   InputAdornment,
+  Grid,
 } from '@mui/material';
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -32,8 +33,8 @@ import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
 import HowToRegIcon from '@mui/icons-material/HowToReg';
-import PersonIcon from '@mui/icons-material/Person';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import CloseIcon from '@mui/icons-material/Close';
 import { motion, AnimatePresence } from 'framer-motion';
 import { participantsService } from '../services/api';
 
@@ -153,7 +154,14 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
         onCheckinSuccess(res.participant);
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to check in participant.');
+      const data = err.response?.data;
+      if (data?.matches?.length) {
+        setSelectedParticipant(null);
+        setSuggestions(data.matches);
+        setError(data.error || 'Multiple participants found. Please select the correct attendee.');
+      } else {
+        setError(data?.error || 'Failed to check in participant.');
+      }
     } finally {
       setLoading(false);
     }
@@ -169,6 +177,11 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
 
     if (suggestions.length === 1) {
       handleSelectParticipant(suggestions[0]);
+      return;
+    }
+
+    // Multiple matches (e.g. duplicate emails): require an explicit choice.
+    if (suggestions.length > 1) {
       return;
     }
 
@@ -189,9 +202,20 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
     if (!timeStr) return null;
     try {
       return new Date(timeStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-    } catch (e) {
+    } catch {
       return null;
     }
+  };
+
+  const getRegisteredSessionLabels = (p) => {
+    if (!p) return [];
+    if (Array.isArray(p.session_badges) && p.session_badges.length > 0) {
+      return p.session_badges;
+    }
+    if (p.session) {
+      return p.session.split(',').map((item) => item.trim()).filter(Boolean);
+    }
+    return [];
   };
 
   const isSelectedAlreadyCheckedIn = selectedParticipant
@@ -202,26 +226,70 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
     ? getCheckinTimestamp(selectedParticipant, selectedDay)
     : null;
 
+  const selectedSessionLabels = getRegisteredSessionLabels(selectedParticipant);
+  const isRegisteredForSelectedDay = selectedParticipant
+    ? Boolean(selectedDay === '1' ? selectedParticipant.attends_day1 : selectedParticipant.attends_day2)
+    : false;
+
+  const activeDayColor = selectedDay === '1' ? '#2d82c6' : '#50153f';
+  const activeDaySoft = selectedDay === '1' ? 'rgba(45, 130, 198, 0.1)' : 'rgba(80, 21, 63, 0.1)';
+
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
-      <DialogTitle sx={{ pb: 1.5, borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 1.5 }}>
-        <Box sx={{ bgcolor: 'rgba(80, 21, 63, 0.1)', color: '#50153f', p: 1, borderRadius: 2 }}>
-          <QrCodeScannerIcon />
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="sm"
+      fullWidth
+      PaperProps={{
+        sx: {
+          borderRadius: 3.5,
+          minHeight: { xs: 'auto', sm: 660, md: 700 },
+          maxHeight: '94vh',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+        },
+      }}
+    >
+      {/* Header */}
+      <DialogTitle
+        sx={{
+          py: 1.5,
+          px: 3,
+          borderBottom: '1px solid #e2e8f0',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box sx={{ bgcolor: 'rgba(80, 21, 63, 0.08)', color: '#50153f', p: 0.9, borderRadius: 2 }}>
+            <QrCodeScannerIcon fontSize="small" />
+          </Box>
+          <Box>
+            <Typography variant="subtitle1" fontWeight="900" sx={{ color: '#0f172a', lineHeight: 1.2 }}>
+              Fast-Track Check-in & Badge Desk
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Search attendee or scan Summit ID to accredit immediately
+            </Typography>
+          </Box>
         </Box>
-        <Box>
-          <Typography variant="h6" fontWeight="800" sx={{ color: '#0f172a' }}>
-            Fast Check-in & Badge Desk
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Type name, mobile, email, or Summit ID to choose an attendee and check them in
-          </Typography>
-        </Box>
+
+        <IconButton size="small" onClick={onClose} sx={{ color: '#94a3b8' }}>
+          <CloseIcon fontSize="small" />
+        </IconButton>
       </DialogTitle>
 
-      <DialogContent sx={{ pt: 2.5 }}>
-        {/* Active Station Day Selector */}
-        <Box sx={{ mb: 2.5, textAlign: 'center' }}>
-          <Typography variant="caption" fontWeight="800" color="text.secondary" sx={{ display: 'block', mb: 1, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+      <DialogContent sx={{ p: { xs: 2, sm: 2.5 }, flex: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+        {/* Top Controls: Station Day Selector */}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5, gap: 1 }}>
+          <Typography
+            variant="caption"
+            fontWeight="800"
+            color="text.secondary"
+            sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}
+          >
             Active Check-in Station:
           </Typography>
           <ToggleButtonGroup
@@ -234,17 +302,17 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
               }
             }}
             size="small"
-            fullWidth
             sx={{
               bgcolor: '#f1f5f9',
-              p: 0.5,
+              p: 0.4,
               borderRadius: 2,
               '& .MuiToggleButton-root': {
                 border: 'none',
                 borderRadius: 1.5,
                 fontWeight: 800,
-                fontSize: '0.85rem',
-                py: 0.9,
+                fontSize: '0.78rem',
+                py: 0.5,
+                px: 1.8,
                 '&.Mui-selected': {
                   bgcolor: selectedDay === '1' ? '#2d82c6' : '#50153f',
                   color: 'white',
@@ -255,23 +323,20 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
               },
             }}
           >
-            <ToggleButton value="1">
-              📅 Day 1 Check-in Station
-            </ToggleButton>
-            <ToggleButton value="2">
-              📅 Day 2 Check-in Station
-            </ToggleButton>
+            <ToggleButton value="1">📅 Day 1 Station</ToggleButton>
+            <ToggleButton value="2">📅 Day 2 Station</ToggleButton>
           </ToggleButtonGroup>
         </Box>
 
         {/* Search Input Box */}
         <form onSubmit={handleFormSubmit}>
-          <Box sx={{ position: 'relative', mb: 2 }}>
+          <Box sx={{ position: 'relative', mb: 1.5 }}>
             <TextField
               inputRef={inputRef}
               fullWidth
+              size="small"
               autoFocus
-              placeholder="Type participant name, mobile, email, or Summit ID..."
+              placeholder="Type name, phone, email, or Summit ID..."
               value={query}
               onChange={(e) => handleQueryChange(e.target.value)}
               disabled={loading}
@@ -279,7 +344,7 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                 startAdornment: (
                   <InputAdornment position="start">
                     {searching ? (
-                      <CircularProgress size={20} sx={{ color: selectedDay === '1' ? '#2d82c6' : '#50153f' }} />
+                      <CircularProgress size={18} sx={{ color: activeDayColor }} />
                     ) : (
                       <SearchIcon sx={{ color: 'text.secondary' }} />
                     )}
@@ -298,7 +363,7 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                   borderRadius: 2,
                   bgcolor: '#ffffff',
                   '&.Mui-focused fieldset': {
-                    borderColor: selectedDay === '1' ? '#2d82c6' : '#50153f',
+                    borderColor: activeDayColor,
                     borderWidth: 2,
                   },
                 },
@@ -308,22 +373,22 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
             {/* Live Search Suggestions Dropdown */}
             {suggestions.length > 0 && !selectedParticipant && (
               <Paper
-                elevation={4}
+                elevation={6}
                 sx={{
                   position: 'absolute',
                   top: '100%',
                   left: 0,
                   right: 0,
-                  zIndex: 20,
-                  mt: 0.8,
-                  borderRadius: 2.5,
+                  zIndex: 30,
+                  mt: 0.5,
+                  borderRadius: 2,
                   maxHeight: 280,
                   overflowY: 'auto',
                   border: '1px solid #e2e8f0',
-                  boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
+                  boxShadow: '0 15px 30px -5px rgba(0,0,0,0.15)',
                 }}
               >
-                <Box sx={{ px: 2, py: 1, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                <Box sx={{ px: 2, py: 0.8, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
                   <Typography variant="caption" fontWeight="800" color="text.secondary">
                     Select matching attendee ({suggestions.length} found):
                   </Typography>
@@ -339,20 +404,20 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                         <ListItemButton
                           onClick={() => handleSelectParticipant(p)}
                           sx={{
-                            py: 1.2,
+                            py: 1,
                             px: 2,
                             '&:hover': {
-                              bgcolor: 'rgba(80, 21, 63, 0.04)',
+                              bgcolor: 'rgba(80, 21, 63, 0.05)',
                             },
                           }}
                         >
-                          <ListItemAvatar sx={{ minWidth: 46 }}>
+                          <ListItemAvatar sx={{ minWidth: 42 }}>
                             <Avatar
                               sx={{
-                                width: 34,
-                                height: 34,
+                                width: 32,
+                                height: 32,
                                 bgcolor: guestColor,
-                                fontSize: '0.85rem',
+                                fontSize: '0.8rem',
                                 fontWeight: 800,
                               }}
                             >
@@ -361,16 +426,16 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                           </ListItemAvatar>
                           <ListItemText
                             primary={
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                                <Typography variant="subtitle2" fontWeight="800" sx={{ color: '#0f172a' }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" fontWeight="800" sx={{ color: '#0f172a' }}>
                                   {p.name}
                                 </Typography>
                                 <Chip
                                   label={p.summit_id}
                                   size="small"
                                   sx={{
-                                    height: 20,
-                                    fontSize: '0.7rem',
+                                    height: 18,
+                                    fontSize: '0.68rem',
                                     fontWeight: 700,
                                     bgcolor: '#f1f5f9',
                                   }}
@@ -379,29 +444,22 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                                   label={p.guest_type || 'General'}
                                   size="small"
                                   sx={{
-                                    height: 20,
-                                    fontSize: '0.68rem',
+                                    height: 18,
+                                    fontSize: '0.65rem',
                                     fontWeight: 700,
                                     bgcolor: `${guestColor}15`,
                                     color: guestColor,
                                     border: `1px solid ${guestColor}30`,
                                   }}
                                 />
-                              </Box>
-                            }
-                            secondary={
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0.3 }}>
-                                <Typography variant="caption" color="text.secondary">
-                                  {p.mobile ? `📞 ${p.mobile}` : ''} {p.email ? `• ${p.email}` : ''}
-                                </Typography>
                                 {isCheckedIn ? (
                                   <Chip
                                     size="small"
-                                    icon={<CheckCircleIcon sx={{ fontSize: '14px !important' }} />}
-                                    label={`Day ${selectedDay}: Already Checked In${timeChecked ? ` (${timeChecked})` : ''}`}
+                                    icon={<CheckCircleIcon sx={{ fontSize: '12px !important' }} />}
+                                    label={`Day ${selectedDay} In${timeChecked ? ` (${timeChecked})` : ''}`}
                                     sx={{
-                                      height: 22,
-                                      fontSize: '0.68rem',
+                                      height: 18,
+                                      fontSize: '0.65rem',
                                       fontWeight: 800,
                                       bgcolor: '#fef3c7',
                                       color: '#92400e',
@@ -411,16 +469,26 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                                 ) : (
                                   <Chip
                                     size="small"
-                                    label={`Day ${selectedDay}: Not Checked In`}
+                                    label={`Day ${selectedDay} Not In`}
                                     sx={{
-                                      height: 22,
-                                      fontSize: '0.68rem',
+                                      height: 18,
+                                      fontSize: '0.65rem',
                                       fontWeight: 700,
                                       bgcolor: '#f1f5f9',
                                       color: '#64748b',
                                     }}
                                   />
                                 )}
+                              </Box>
+                            }
+                            secondary={
+                              <Box sx={{ mt: 0.2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 0.5 }}>
+                                <Typography variant="caption" color="text.secondary">
+                                  {p.mobile ? `📞 ${p.mobile}` : ''} {p.email ? `• ${p.email}` : ''}
+                                </Typography>
+                                <Typography variant="caption" fontWeight="700" sx={{ color: activeDayColor }}>
+                                  {getRegisteredSessionLabels(p).join(' • ') || 'No sessions'}
+                                </Typography>
                               </Box>
                             }
                           />
@@ -431,116 +499,172 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                 </List>
               </Paper>
             )}
-
-            {/* No match indicator while typing */}
-            {query.trim().length >= 2 && !searching && suggestions.length === 0 && !selectedParticipant && (
-              <Box sx={{ mt: 1, px: 1 }}>
-                <Typography variant="caption" color="text.secondary">
-                  No registered participants found matching "<strong>{query}</strong>".
-                </Typography>
-              </Box>
-            )}
           </Box>
         </form>
 
         {error && (
-          <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>
+          <Alert severity="error" sx={{ mb: 1.5, borderRadius: 2 }}>
             {error}
           </Alert>
         )}
 
-        {/* Selected Participant Card */}
-        <AnimatePresence>
-          {selectedParticipant && (
+        {/* Selected Participant Card — Compact Single Column Fitting Entirely Without Scrolling */}
+        <AnimatePresence mode="wait">
+          {selectedParticipant ? (
             <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              key={selectedParticipant.id}
+              initial={{ opacity: 0, y: 8, scale: 0.99 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.2 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.16 }}
             >
               <Paper
                 elevation={0}
                 sx={{
-                  p: 2.5,
-                  borderRadius: 3,
+                  p: 2,
+                  borderRadius: 2.5,
                   bgcolor: isSelectedAlreadyCheckedIn ? '#fffbeb' : '#f8fafc',
-                  border: `2px solid ${isSelectedAlreadyCheckedIn ? '#f59e0b' : (selectedDay === '1' ? '#2d82c6' : '#50153f')}`,
-                  mb: 2,
+                  border: `2px solid ${isSelectedAlreadyCheckedIn ? '#f59e0b' : activeDayColor}`,
                 }}
               >
-                {/* Header with Name & Actions */}
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
-                  <Box>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                      <Typography variant="h6" fontWeight="900" sx={{ color: '#0f172a' }}>
+                {/* Attendee Profile Row */}
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2 }}>
+                    <Avatar
+                      sx={{
+                        width: 40,
+                        height: 40,
+                        bgcolor: GUEST_TYPE_COLORS[selectedParticipant.guest_type] || activeDayColor,
+                        fontSize: '1rem',
+                        fontWeight: 800,
+                      }}
+                    >
+                      {(selectedParticipant.name || 'P')[0].toUpperCase()}
+                    </Avatar>
+                    <Box>
+                      <Typography variant="subtitle1" fontWeight="900" sx={{ color: '#0f172a', lineHeight: 1.2 }}>
                         {selectedParticipant.name || selectedParticipant.full_name}
                       </Typography>
-                      <Chip
-                        label={selectedParticipant.summit_id}
-                        size="small"
-                        sx={{ fontWeight: 800, bgcolor: '#ffffff', border: '1px solid #cbd5e1' }}
-                      />
-                      <Chip
-                        label={selectedParticipant.guest_type || 'General Participant'}
-                        size="small"
-                        sx={{
-                          fontWeight: 800,
-                          bgcolor: `${GUEST_TYPE_COLORS[selectedParticipant.guest_type] || '#2d82c6'}20`,
-                          color: GUEST_TYPE_COLORS[selectedParticipant.guest_type] || '#2d82c6',
-                        }}
-                      />
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mt: 0.3, flexWrap: 'wrap' }}>
+                        <Chip
+                          label={selectedParticipant.summit_id}
+                          size="small"
+                          sx={{ fontWeight: 800, bgcolor: '#ffffff', border: '1px solid #cbd5e1', height: 20, fontSize: '0.72rem' }}
+                        />
+                        <Chip
+                          label={selectedParticipant.guest_type || 'General Participant'}
+                          size="small"
+                          sx={{
+                            fontWeight: 800,
+                            height: 20,
+                            fontSize: '0.7rem',
+                            bgcolor: `${GUEST_TYPE_COLORS[selectedParticipant.guest_type] || activeDayColor}20`,
+                            color: GUEST_TYPE_COLORS[selectedParticipant.guest_type] || activeDayColor,
+                          }}
+                        />
+                      </Box>
                     </Box>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                      {selectedParticipant.email} {selectedParticipant.mobile ? `• 📞 ${selectedParticipant.mobile}` : ''}
-                    </Typography>
                   </Box>
 
                   <Button
                     size="small"
                     variant="text"
-                    color="inherit"
                     onClick={handleClearSelection}
-                    sx={{ fontSize: '0.75rem', fontWeight: 700 }}
+                    sx={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', minWidth: 'auto', px: 1 }}
                   >
                     Change
                   </Button>
                 </Box>
 
-                <Divider sx={{ my: 1.5 }} />
+                {/* Contact Row */}
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.2, fontSize: '0.8rem' }}>
+                  {selectedParticipant.email} {selectedParticipant.mobile ? `• 📞 ${selectedParticipant.mobile}` : ''}
+                </Typography>
 
-                {/* Day 1 & Day 2 Badge indicators */}
-                <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <Chip
-                    icon={<EventAvailableIcon />}
-                    label={
-                      selectedParticipant.day1_checked_in
-                        ? `Day 1: Checked In (${getCheckinTimestamp(selectedParticipant, '1') || 'Done'})`
-                        : 'Day 1: Not Checked In'
-                    }
-                    size="small"
-                    color={selectedParticipant.day1_checked_in ? 'success' : 'default'}
-                    sx={{ fontWeight: 700 }}
-                  />
-                  <Chip
-                    icon={<EventAvailableIcon />}
-                    label={
-                      selectedParticipant.day2_checked_in
-                        ? `Day 2: Checked In (${getCheckinTimestamp(selectedParticipant, '2') || 'Done'})`
-                        : 'Day 2: Not Checked In'
-                    }
-                    size="small"
-                    color={selectedParticipant.day2_checked_in ? 'success' : 'default'}
-                    sx={{ fontWeight: 700 }}
-                  />
+                {/* Registered Sessions Badges */}
+                <Box
+                  sx={{
+                    p: 1.2,
+                    mb: 1.5,
+                    borderRadius: 2,
+                    bgcolor: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    fontWeight="800"
+                    sx={{ color: activeDayColor, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', mb: 0.8, fontSize: '0.7rem' }}
+                  >
+                    Registered Summit Days & Sessions:
+                  </Typography>
+
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.6, alignItems: 'center' }}>
+                    <Chip
+                      icon={selectedParticipant.attends_day1 ? <CheckCircleIcon /> : <EventAvailableIcon />}
+                      label="DAY 1"
+                      size="small"
+                      sx={{
+                        height: 24,
+                        fontWeight: 900,
+                        fontSize: '0.72rem',
+                        bgcolor: selectedParticipant.attends_day1 ? '#2d82c6' : 'transparent',
+                        color: selectedParticipant.attends_day1 ? '#ffffff' : '#94a3b8',
+                        border: `1.5px solid ${selectedParticipant.attends_day1 ? '#2d82c6' : '#cbd5e1'}`,
+                        borderStyle: selectedParticipant.attends_day1 ? 'solid' : 'dashed',
+                        '& .MuiChip-icon': {
+                          color: selectedParticipant.attends_day1 ? '#ffffff' : '#94a3b8',
+                          fontSize: 14,
+                        },
+                      }}
+                    />
+
+                    <Chip
+                      icon={selectedParticipant.attends_day2 ? <CheckCircleIcon /> : <EventAvailableIcon />}
+                      label="DAY 2"
+                      size="small"
+                      sx={{
+                        height: 24,
+                        fontWeight: 900,
+                        fontSize: '0.72rem',
+                        bgcolor: selectedParticipant.attends_day2 ? '#50153f' : 'transparent',
+                        color: selectedParticipant.attends_day2 ? '#ffffff' : '#94a3b8',
+                        border: `1.5px solid ${selectedParticipant.attends_day2 ? '#50153f' : '#cbd5e1'}`,
+                        borderStyle: selectedParticipant.attends_day2 ? 'solid' : 'dashed',
+                        '& .MuiChip-icon': {
+                          color: selectedParticipant.attends_day2 ? '#ffffff' : '#94a3b8',
+                          fontSize: 14,
+                        },
+                      }}
+                    />
+
+                    {selectedSessionLabels.map((session) => (
+                      <Chip
+                        key={session}
+                        label={session}
+                        size="small"
+                        sx={{
+                          height: 24,
+                          fontWeight: 700,
+                          fontSize: '0.7rem',
+                          bgcolor: 'rgba(80, 21, 63, 0.06)',
+                          color: '#50153f',
+                          border: '1px solid rgba(80, 21, 63, 0.2)',
+                        }}
+                      />
+                    ))}
+                  </Box>
                 </Box>
 
-                {/* Check-in Status Warning or Ready Prompt */}
+                {/* Check-in Status Alert */}
                 {isSelectedAlreadyCheckedIn ? (
                   <Alert
                     severity="warning"
-                    icon={<WarningAmberIcon />}
+                    icon={<WarningAmberIcon fontSize="small" />}
                     sx={{
-                      mb: 2,
+                      py: 0.5,
+                      px: 1.5,
+                      mb: 1.5,
                       borderRadius: 2,
                       bgcolor: '#fef3c7',
                       color: '#92400e',
@@ -548,96 +672,177 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                       '& .MuiAlert-icon': { color: '#d97706' },
                     }}
                   >
-                    <Typography variant="subtitle2" fontWeight="800">
+                    <Typography variant="body2" fontWeight="800">
                       Already Checked In for Day {selectedDay}
                     </Typography>
-                    <Typography variant="caption">
-                      This participant was already accredited on Day {selectedDay}
-                      {selectedTimestamp ? ` at ${selectedTimestamp}` : ''}. You may re-print their badge below.
+                    <Typography variant="caption" display="block">
+                      Accredited{selectedTimestamp ? ` at ${selectedTimestamp}` : ''}. You may re-confirm or re-print badge below.
                     </Typography>
                   </Alert>
                 ) : (
                   <Alert
                     severity="info"
-                    icon={<HowToRegIcon />}
+                    icon={<HowToRegIcon fontSize="small" />}
                     sx={{
-                      mb: 2,
+                      py: 0.5,
+                      px: 1.5,
+                      mb: 1.5,
                       borderRadius: 2,
-                      bgcolor: selectedDay === '1' ? 'rgba(45, 130, 198, 0.08)' : 'rgba(80, 21, 63, 0.08)',
+                      bgcolor: activeDaySoft,
                       color: selectedDay === '1' ? '#1e5d8f' : '#50153f',
-                      border: `1px solid ${selectedDay === '1' ? 'rgba(45, 130, 198, 0.25)' : 'rgba(80, 21, 63, 0.25)'}`,
+                      border: `1px solid ${selectedDay === '1' ? 'rgba(45, 130, 198, 0.3)' : 'rgba(80, 21, 63, 0.3)'}`,
                     }}
                   >
-                    <Typography variant="subtitle2" fontWeight="800">
-                      Participant Chosen — Ready for Day {selectedDay} Check-In
+                    <Typography variant="body2" fontWeight="800">
+                      Ready for Day {selectedDay} Check-In
                     </Typography>
-                    <Typography variant="caption">
-                      Click "Confirm Check-in" below to mark attendance and generate accreditation.
+                    <Typography variant="caption" display="block">
+                      {isRegisteredForSelectedDay
+                        ? `Attendee is registered for Day ${selectedDay}.`
+                        : `⚠️ Notice: Attendee did not register for Day ${selectedDay}.`}
                     </Typography>
                   </Alert>
                 )}
 
-                {/* Success Message After Check-in Action */}
+                {/* Success Alert Banner After Check-In */}
                 {checkinSuccess && (
                   <Alert
                     severity="success"
-                    icon={<CheckCircleIcon />}
-                    sx={{ mb: 2, borderRadius: 2 }}
+                    icon={<CheckCircleIcon fontSize="small" />}
+                    sx={{ py: 0.5, px: 1.5, mb: 1.5, borderRadius: 2 }}
                   >
-                    <Typography variant="subtitle2" fontWeight="800">
+                    <Typography variant="body2" fontWeight="800">
                       {checkinSuccess.message}
                     </Typography>
                   </Alert>
                 )}
 
-                {/* Main Action Buttons */}
-                <Box sx={{ display: 'flex', gap: 1.5, justifyContent: 'flex-end', flexWrap: 'wrap', mt: 1 }}>
+                {/* Primary Action Button: Large Confirm Check-In */}
+                <Button
+                  fullWidth
+                  variant="contained"
+                  size="large"
+                  startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <HowToRegIcon />}
+                  onClick={handleCheckin}
+                  disabled={loading}
+                  sx={{
+                    py: 1.4,
+                    fontWeight: 900,
+                    fontSize: '0.98rem',
+                    borderRadius: 2.5,
+                    boxShadow: '0 4px 14px 0 rgba(0,0,0,0.15)',
+                    bgcolor: isSelectedAlreadyCheckedIn ? '#d97706' : activeDayColor,
+                    '&:hover': {
+                      bgcolor: isSelectedAlreadyCheckedIn ? '#b45309' : (selectedDay === '1' ? '#1e68a3' : '#3b0d2d'),
+                    },
+                  }}
+                >
+                  {isSelectedAlreadyCheckedIn
+                    ? `Re-confirm Day ${selectedDay} Check-In`
+                    : `Confirm Day ${selectedDay} Check-In`}
+                </Button>
+
+                {/* Secondary Action Row: Print Badge + Next Attendee */}
+                <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
                   {onPrintBadge && (
                     <Button
+                      fullWidth
                       variant="outlined"
-                      startIcon={<PrintIcon />}
+                      size="small"
+                      startIcon={<PrintIcon fontSize="small" />}
                       onClick={() => onPrintBadge(selectedParticipant)}
-                      sx={{ fontWeight: 700 }}
+                      sx={{
+                        py: 0.8,
+                        fontWeight: 700,
+                        fontSize: '0.8rem',
+                        borderColor: '#cbd5e1',
+                        color: '#334155',
+                        '&:hover': { borderColor: '#50153f', color: '#50153f' },
+                      }}
                     >
-                      Print Lanyard Badge
+                      Print Badge
                     </Button>
                   )}
 
                   <Button
-                    variant="contained"
-                    startIcon={loading ? <CircularProgress size={18} color="inherit" /> : <HowToRegIcon />}
-                    onClick={handleCheckin}
-                    disabled={loading}
+                    fullWidth
+                    variant="outlined"
+                    size="small"
+                    startIcon={<RestartAltIcon fontSize="small" />}
+                    onClick={handleClearSelection}
                     sx={{
-                      fontWeight: 800,
-                      px: 3,
-                      bgcolor: isSelectedAlreadyCheckedIn ? '#d97706' : (selectedDay === '1' ? '#2d82c6' : '#50153f'),
-                      '&:hover': {
-                        bgcolor: isSelectedAlreadyCheckedIn ? '#b45309' : (selectedDay === '1' ? '#236ca7' : '#3b0d2d'),
-                      },
+                      py: 0.8,
+                      fontWeight: 700,
+                      fontSize: '0.8rem',
+                      borderColor: '#cbd5e1',
+                      color: '#64748b',
+                      '&:hover': { borderColor: '#94a3b8', color: '#334155' },
                     }}
                   >
-                    {isSelectedAlreadyCheckedIn
-                      ? `Re-confirm Day ${selectedDay} Check-In`
-                      : `Confirm Day ${selectedDay} Check-In`}
+                    Next Attendee
                   </Button>
                 </Box>
               </Paper>
             </motion.div>
+          ) : (
+            /* Idle Placeholder when no participant is selected */
+            <Box
+              sx={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                p: 3,
+                textAlign: 'center',
+                borderRadius: 2.5,
+                bgcolor: '#f8fafc',
+                border: '1.5px dashed #e2e8f0',
+              }}
+            >
+              <Box
+                sx={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: '50%',
+                  bgcolor: activeDaySoft,
+                  color: activeDayColor,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  mb: 1.5,
+                }}
+              >
+                <QrCodeScannerIcon sx={{ fontSize: 28 }} />
+              </Box>
+              <Typography variant="subtitle1" fontWeight="800" sx={{ color: '#1e293b', mb: 0.5 }}>
+                Ready to Check In
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 360, fontSize: '0.82rem' }}>
+                Type an attendee name, phone number, email, or Summit ID above, or scan a badge barcode to look up immediately.
+              </Typography>
+              <Chip
+                label={`Desk Active: Day ${selectedDay}`}
+                size="small"
+                sx={{
+                  mt: 2,
+                  fontWeight: 800,
+                  fontSize: '0.72rem',
+                  bgcolor: activeDaySoft,
+                  color: activeDayColor,
+                }}
+              />
+            </Box>
           )}
         </AnimatePresence>
       </DialogContent>
 
-      <DialogActions sx={{ px: 3, py: 2, justifyContent: 'space-between' }}>
-        <Button
-          startIcon={<RestartAltIcon />}
-          onClick={handleClearSelection}
-          color="inherit"
-          disabled={!query && !selectedParticipant}
-        >
-          Next Attendee (Reset)
-        </Button>
-        <Button onClick={onClose} color="inherit">
+      {/* Footer */}
+      <DialogActions sx={{ px: 3, py: 1.5, borderTop: '1px solid #e2e8f0', justifyContent: 'space-between' }}>
+        <Typography variant="caption" color="text.secondary">
+          Station shortcut: Press <strong>Enter</strong> to check in top match
+        </Typography>
+        <Button onClick={onClose} color="inherit" sx={{ fontWeight: 700, fontSize: '0.82rem' }}>
           Close Desk
         </Button>
       </DialogActions>

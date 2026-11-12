@@ -8,8 +8,10 @@ import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Participants } from './pages/Participants';
+import { CheckinLists } from './pages/CheckinLists';
 import { SyncManager } from './pages/SyncManager';
 import { UserManagement } from './pages/UserManagement';
+import { InvitedGuests } from './pages/InvitedGuests';
 
 export function App() {
   return (
@@ -41,10 +43,26 @@ export function App() {
                 }
               />
               <Route
+                path="checkins"
+                element={
+                  <ProtectedRoute hostOrAdmin>
+                    <CheckinLists />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="sync"
                 element={
                   <ProtectedRoute adminOnly>
                     <SyncManager />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="invited-guests"
+                element={
+                  <ProtectedRoute adminOnly>
+                    <InvitedGuests />
                   </ProtectedRoute>
                 }
               />

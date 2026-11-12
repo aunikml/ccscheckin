@@ -90,7 +90,7 @@ def fetch_sheet_csv_rows(sheet_id: str, tab_name: str = 'Form Responses 1'):
     rows = [row for row in reader]
     return rows
 
-def sync_participants_from_rows(rows: list, config: GoogleSheetConfig, triggered_by: str = 'admin'):
+def sync_participants_from_rows(rows: list, config: GoogleSheetConfig, triggered_by: str = 'admin', source_id: str = 'default'):
     """
     Processes row dictionaries and upserts into Participant model based on the National Child Care Summit schema:
     - Guest Type
@@ -100,6 +100,9 @@ def sync_participants_from_rows(rows: list, config: GoogleSheetConfig, triggered
     - Mobile
     - Confirmation
     - Session
+
+    Each source row is stored independently using a stable source_key, so
+    duplicate submissions (same email and/or name) are all preserved.
     """
     sync_log = SyncHistory.objects.create(
         status='SUCCESS',
@@ -255,28 +258,45 @@ def sync_participants_from_rows(rows: list, config: GoogleSheetConfig, triggered
             d2s2 = 'day 2 session 2' in s_lower or 'd2s2' in s_lower
 
             with transaction.atomic():
-                participant, created = Participant.objects.get_or_create(
-                    email=email,
-                    defaults={
-                        'name': name,
-                        'mobile': mobile,
-                        'guest_type': guest_type,
-                        'registration_time': reg_time,
-                        'confirmation': confirmation,
-                        'session': session,
-                        'day1_session1': d1s1,
-                        'day1_session2': d1s2,
-                        'day2_session1': d2s1,
-                        'day2_session2': d2s2,
-                        'status': status_val,
-                    }
-                )
+                # Every sheet row is its own participant. source_key keeps
+                # re-syncs idempotent without merging duplicate submissions.
+                source_key = f"{source_id}:{config.tab_name}:{idx}"
+                participant = Participant.objects.filter(source_key=source_key).first()
+                created = participant is None
 
                 if created:
+                    # Adopt a legacy record from an import made before
+                    # source tracking existed, but only once per row.
+                    participant = Participant.objects.filter(
+                        source_key__isnull=True,
+                        email__iexact=email,
+                        name__iexact=name,
+                    ).order_by('id').first()
+                    if participant is not None:
+                        participant.source_key = source_key
+                        created = False
+
+                if created:
+                    participant = Participant.objects.create(
+                        source_key=source_key,
+                        name=name,
+                        email=email,
+                        mobile=mobile,
+                        guest_type=guest_type,
+                        registration_time=reg_time,
+                        confirmation=confirmation,
+                        session=session,
+                        day1_session1=d1s1,
+                        day1_session2=d1s2,
+                        day2_session1=d2s1,
+                        day2_session2=d2s2,
+                        status=status_val,
+                    )
                     new_count += 1
                 else:
                     # Update existing participant info
                     participant.name = name
+                    participant.email = email
                     if mobile:
                         participant.mobile = mobile
                     if guest_type:
@@ -299,6 +319,17 @@ def sync_participants_from_rows(rows: list, config: GoogleSheetConfig, triggered
         except Exception as e:
             error_count += 1
             details.append(f"Row {idx} error: {str(e)}")
+
+    # Prune orphan records if the sheet shrank (e.g. deleted/trimmed rows from sheet)
+    prefix = f"{source_id}:{config.tab_name}:"
+    valid_keys = {f"{prefix}{i}" for i in range(1, len(rows) + 1)}
+    orphans = Participant.objects.filter(
+        source_key__startswith=prefix
+    ).exclude(source_key__in=valid_keys)
+
+    for orphan in orphans:
+        if not (orphan.day1_checked_in or orphan.day2_checked_in):
+            orphan.delete()
 
     sync_log.finished_at = timezone.now()
     sync_log.rows_processed = len(rows)
@@ -344,7 +375,7 @@ def execute_google_sheet_sync(use_sample_if_empty: bool = True, triggered_by: st
             config.last_sync_status = 'RUNNING'
             config.save()
             rows = fetch_sheet_csv_rows(sheet_id, tab_name)
-            return sync_participants_from_rows(rows, config, triggered_by=triggered_by)
+            return sync_participants_from_rows(rows, config, triggered_by=triggered_by, source_id=sheet_id)
         except Exception as e:
             config.last_sync_status = 'ERROR'
             config.last_sync_message = f"Failed to sync from Google Sheet: {str(e)}"
@@ -362,6 +393,83 @@ def execute_google_sheet_sync(use_sample_if_empty: bool = True, triggered_by: st
     else:
         if use_sample_if_empty:
             rows = load_sample_csv_rows()
-            return sync_participants_from_rows(rows, config, triggered_by=triggered_by)
+            return sync_participants_from_rows(rows, config, triggered_by=triggered_by, source_id='sample')
         else:
             raise ValueError("No Google Sheet ID or URL configured in .env or Settings.")
+
+
+def sync_invited_guests_from_sheet(sheet_url: str = None):
+    """
+    Fetches and synchronizes the invited guests reference list from Google Sheets.
+    Default Sheet: https://docs.google.com/spreadsheets/d/1gByjGuQpWdbyBE5ucxEHVKsP07G5ZL6LgSZLVxcYP80/edit?usp=sharing
+    """
+    from .models import InvitedGuest, InvitedGuestConfig
+
+    config = InvitedGuestConfig.get_config()
+    target_url = (sheet_url or config.sheet_url or InvitedGuestConfig.DEFAULT_SHEET_URL).strip()
+    sheet_id = extract_sheet_id(target_url)
+
+    if not sheet_id:
+        raise ValueError("Invalid Google Sheet URL or ID for invited guests.")
+
+    config.last_sync_status = 'RUNNING'
+    config.save()
+
+    export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) NationalChildCareSummit/1.0'
+    }
+
+    try:
+        response = requests.get(export_url, headers=headers, timeout=30)
+        if response.status_code != 200:
+            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv"
+            response = requests.get(csv_url, headers=headers, timeout=30)
+            response.raise_for_status()
+
+        reader = csv.DictReader(io.StringIO(response.text))
+        rows = list(reader)
+
+        if not rows:
+            raise ValueError("No records found in the invited guests spreadsheet.")
+
+        guest_objects = []
+        for idx, row in enumerate(rows, start=1):
+            name = (row.get('Name') or '').strip()
+            number = (row.get('Number') or row.get('Mobile') or '').strip()
+            email = (row.get('Email') or '').strip()
+            cohort = (row.get('Co-hort') or row.get('Cohort') or '').replace('\xa0', '').strip()
+            session = (row.get('Session') or '').strip()
+
+            guest_objects.append(InvitedGuest(
+                name=name,
+                number=number,
+                email=email,
+                cohort=cohort,
+                session=session,
+                source_row=idx,
+            ))
+
+        with transaction.atomic():
+            InvitedGuest.objects.all().delete()
+            InvitedGuest.objects.bulk_create(guest_objects, batch_size=1000)
+
+            config.sheet_url = target_url
+            config.last_synced_at = timezone.now()
+            config.last_sync_status = 'SUCCESS'
+            config.total_records = len(guest_objects)
+            config.last_sync_message = f"Successfully synced {len(guest_objects)} invited guests."
+            config.save()
+
+        return {
+            'status': 'SUCCESS',
+            'total_imported': len(guest_objects),
+            'sheet_url': target_url,
+            'synced_at': config.last_synced_at,
+            'message': config.last_sync_message,
+        }
+    except Exception as e:
+        config.last_sync_status = 'ERROR'
+        config.last_sync_message = f"Failed to sync invited guests: {str(e)}"
+        config.save()
+        raise e

@@ -181,14 +181,16 @@ export const Participants = () => {
 
   // Create or Update
   const handleSaveParticipant = async (formData) => {
+    let saved;
     if (editingParticipant?.id) {
-      await participantsService.update(editingParticipant.id, formData);
+      saved = await participantsService.update(editingParticipant.id, formData);
       setToast({ open: true, message: 'Participant updated successfully!', severity: 'success' });
     } else {
-      await participantsService.create(formData);
+      saved = await participantsService.create(formData);
       setToast({ open: true, message: 'Participant registered successfully!', severity: 'success' });
     }
     fetchParticipants();
+    return saved;
   };
 
   // Delete single
@@ -817,6 +819,10 @@ export const Participants = () => {
         onClose={() => setDialogOpen(false)}
         onSave={handleSaveParticipant}
         participant={editingParticipant}
+        onPrintBadge={(p) => {
+          setDialogOpen(false);
+          setBadgeModalParticipant(p);
+        }}
       />
 
       {/* Accreditation Badge Modal */}

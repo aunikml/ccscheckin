@@ -1,16 +1,28 @@
 import csv
 from django.http import HttpResponse
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Exists, OuterRef
 from django.utils import timezone
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from authentication.permissions import IsAdminUserOnly, ParticipantCustomPermission
-from .models import Participant, GoogleSheetConfig, SyncHistory
-from .serializers import ParticipantSerializer, GoogleSheetConfigSerializer, SyncHistorySerializer
-from .sheet_sync import execute_google_sheet_sync, sync_participants_from_rows, fetch_sheet_csv_rows, extract_sheet_id
+from authentication.permissions import IsAdminUserOnly, ParticipantCustomPermission, IsRegistrationHostOrAdmin
+from .models import Participant, GoogleSheetConfig, SyncHistory, InvitedGuest, InvitedGuestConfig
+from .serializers import (
+    ParticipantSerializer,
+    GoogleSheetConfigSerializer,
+    SyncHistorySerializer,
+    InvitedGuestSerializer,
+    InvitedGuestConfigSerializer,
+)
+from .sheet_sync import (
+    execute_google_sheet_sync,
+    sync_participants_from_rows,
+    fetch_sheet_csv_rows,
+    extract_sheet_id,
+    sync_invited_guests_from_sheet,
+)
 
 class ParticipantViewSet(viewsets.ModelViewSet):
     """
@@ -216,19 +228,48 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     def search_lookup(self, request):
         """
         Fast typeahead search lookup for check-in desk.
-        Returns up to 15 matching participants matching query against name, summit_id, email, or mobile.
+        Returns matching participants matching query against name, summit_id, email, or mobile.
+        When searching by name, Summit ID, or email, duplicate registrations sharing the
+        same email are also surfaced together.
+        Phone numbers are NOT used to bridge siblings across different emails, because
+        coordinators / focal persons often use their mobile number for distinct attendees.
         """
         q = request.query_params.get('q', '').strip()
         if not q or len(q) < 1:
             return Response([])
 
-        qs = Participant.objects.filter(
+        base_matches = list(Participant.objects.filter(
             Q(name__icontains=q) |
             Q(summit_id__icontains=q) |
             Q(email__icontains=q) |
             Q(mobile__icontains=q)
-        ).order_by('name')[:15]
-        serializer = self.get_serializer(qs, many=True)
+        ).order_by('name')[:50])
+
+        results = base_matches
+        matched_ids = {p.id for p in base_matches}
+
+        # Expand email duplicates for group registrations, but do NOT bridge
+        # across mobile numbers (which causes unrelated attendees to be grouped),
+        # and do not expand email siblings if the user is explicitly searching a phone number.
+        is_phone_query = q.replace('+', '').replace('-', '').replace(' ', '').isdigit()
+
+        if not is_phone_query:
+            matched_emails = {
+                p.email.strip().lower()
+                for p in base_matches
+                if p.email and '@' in p.email and p.email.strip()
+            }
+            if matched_emails:
+                sibling_query = Q()
+                for email in matched_emails:
+                    sibling_query |= Q(email__iexact=email)
+
+                siblings = Participant.objects.filter(sibling_query).exclude(
+                    id__in=matched_ids
+                ).order_by('name')
+                results = results + list(siblings)
+
+        serializer = self.get_serializer(results, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=['post'])
@@ -245,11 +286,20 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         if participant_id:
             participant = Participant.objects.filter(id=participant_id).first()
         elif query:
-            participant = Participant.objects.filter(
+            exact_matches = Participant.objects.filter(
                 Q(summit_id__iexact=query) |
                 Q(email__iexact=query) |
                 Q(mobile__iexact=query)
-            ).first()
+            )
+
+            if exact_matches.count() > 1:
+                # Duplicate emails/mobiles: never guess the attendee, return all matches.
+                return Response({
+                    'error': f"Multiple participants found matching '{query}'. Please select from suggestions.",
+                    'matches': self.get_serializer(exact_matches, many=True).data,
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            participant = exact_matches.first()
 
             if not participant:
                 # Fuzzy match by name if only 1 match
@@ -259,7 +309,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 elif fuzzy_matches.count() > 1:
                     return Response({
                         'error': f"Multiple participants found matching '{query}'. Please select from suggestions.",
-                        'matches': [{'id': p.id, 'name': p.name, 'summit_id': p.summit_id} for p in fuzzy_matches[:5]]
+                        'matches': self.get_serializer(fuzzy_matches[:10], many=True).data,
                     }, status=status.HTTP_400_BAD_REQUEST)
         else:
             return Response({'error': 'Please provide a Participant ID or search query.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -621,3 +671,233 @@ class SyncHistoryListView(APIView):
         history = SyncHistory.objects.all().order_by('-started_at')[:20]
         serializer = SyncHistorySerializer(history, many=True)
         return Response(serializer.data)
+
+
+class InvitedGuestViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for the Invited Guests reference list.
+    Supports search, cohort/session filtering, registration status filter,
+    live Google Sheet sync, analytics stats, and CSV export (Admin only).
+    Also provides a fast autocomplete lookup action for on-site registration (Admin & Host).
+    """
+    queryset = InvitedGuest.objects.all()
+    serializer_class = InvitedGuestSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdminUserOnly]
+
+    def get_permissions(self):
+        if self.action == 'lookup':
+            return [permissions.IsAuthenticated(), IsRegistrationHostOrAdmin()]
+        return [permissions.IsAuthenticated(), IsAdminUserOnly()]
+
+    @action(detail=False, methods=['get'])
+    def lookup(self, request):
+        """
+        Fast typeahead search lookup on the invited guests roster for on-site registration autofill.
+        Searches Name, Email, and Phone number.
+        Accessible by both Registration Hosts and Admins.
+        """
+        q = request.query_params.get('q', '').strip()
+        if not q or len(q) < 2:
+            return Response([])
+
+        subq_email = Participant.objects.filter(
+            Q(email__iexact=OuterRef('email')) & ~Q(email='')
+        )
+        subq_name = Participant.objects.filter(
+            Q(name__iexact=OuterRef('name')) & ~Q(name='')
+        )
+
+        matches = list(
+            InvitedGuest.objects.annotate(
+                is_reg_email=Exists(subq_email),
+                is_reg_name=Exists(subq_name),
+            )
+            .filter(
+                Q(name__icontains=q) |
+                Q(email__icontains=q) |
+                Q(number__icontains=q)
+            )
+            .order_by('name')[:15]
+        )
+
+        self._attach_participant_details(matches)
+        serializer = self.get_serializer(matches, many=True)
+        return Response(serializer.data)
+
+    def get_annotated_queryset(self):
+        subq_email = Participant.objects.filter(
+            Q(email__iexact=OuterRef('email')) & ~Q(email='')
+        )
+        subq_name = Participant.objects.filter(
+            Q(name__iexact=OuterRef('name')) & ~Q(name='')
+        )
+        return InvitedGuest.objects.annotate(
+            is_reg_email=Exists(subq_email),
+            is_reg_name=Exists(subq_name)
+        )
+
+    def get_queryset(self):
+        qs = self.get_annotated_queryset()
+
+        search = self.request.query_params.get('search', '').strip()
+        cohort = self.request.query_params.get('cohort', '').strip()
+        session = self.request.query_params.get('session', '').strip()
+        status_param = self.request.query_params.get('registration_status', '').strip().upper()
+
+        if search:
+            qs = qs.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(number__icontains=search) |
+                Q(cohort__icontains=search)
+            )
+
+        if cohort and cohort != 'ALL':
+            qs = qs.filter(cohort=cohort)
+
+        if session and session != 'ALL':
+            qs = qs.filter(session=session)
+
+        if status_param == 'REGISTERED':
+            qs = qs.filter(Q(is_reg_email=True) | Q(is_reg_name=True))
+        elif status_param == 'NOT_REGISTERED':
+            qs = qs.filter(is_reg_email=False, is_reg_name=False)
+
+        sort_by = self.request.query_params.get('sort_by', 'id')
+        return qs.order_by(sort_by)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+
+        page = self.paginate_queryset(queryset)
+        items = list(page) if page is not None else list(queryset)
+
+        self._attach_participant_details(items)
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(items, many=True)
+        return Response(serializer.data)
+
+    def _attach_participant_details(self, items):
+        if not items:
+            return
+
+        emails = {item.email.strip().lower() for item in items if item.email}
+        names = {item.name.strip().lower() for item in items if item.name}
+
+        participants = Participant.objects.filter(
+            Q(email__in=emails) | Q(name__in=names)
+        )
+        email_map = {p.email.strip().lower(): p for p in participants if p.email}
+        name_map = {p.name.strip().lower(): p for p in participants if p.name}
+
+        for item in items:
+            e = item.email.strip().lower() if item.email else ''
+            n = item.name.strip().lower() if item.name else ''
+            p = email_map.get(e) or name_map.get(n)
+            if p:
+                item.is_registered = True
+                item.registered_summit_id = p.summit_id
+                item.registered_status = p.status
+                item.registered_guest_type = p.guest_type
+                item.day1_checked_in = p.day1_checked_in
+                item.day2_checked_in = p.day2_checked_in
+            else:
+                item.is_registered = False
+                item.registered_summit_id = None
+                item.registered_status = None
+                item.registered_guest_type = None
+                item.day1_checked_in = False
+                item.day2_checked_in = False
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """
+        Summary analytics for the invited guests list.
+        """
+        qs = self.get_annotated_queryset()
+        total_invited = qs.count()
+
+        registered_qs = qs.filter(Q(is_reg_email=True) | Q(is_reg_name=True))
+        total_registered = registered_qs.count()
+        total_not_registered = total_invited - total_registered
+
+        rate = round((total_registered / total_invited) * 100, 1) if total_invited > 0 else 0
+
+        cohort_counts = (
+            InvitedGuest.objects.exclude(cohort='')
+            .values('cohort')
+            .annotate(count=Count('id'))
+            .order_by('-count')[:25]
+        )
+
+        session_counts = (
+            InvitedGuest.objects.exclude(session='')
+            .values('session')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        )
+
+        config = InvitedGuestConfig.get_config()
+        config_serializer = InvitedGuestConfigSerializer(config)
+
+        return Response({
+            'total_invited': total_invited,
+            'total_registered': total_registered,
+            'total_not_registered': total_not_registered,
+            'registration_rate': rate,
+            'cohorts': list(cohort_counts),
+            'sessions': list(session_counts),
+            'config': config_serializer.data,
+        })
+
+    @action(detail=False, methods=['post'])
+    def sync_sheet(self, request):
+        """
+        Trigger sync with the invited guests Google Sheet.
+        """
+        sheet_url = request.data.get('sheet_url')
+        try:
+            result = sync_invited_guests_from_sheet(sheet_url=sheet_url)
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'])
+    def export_csv(self, request):
+        """
+        Export filtered invited guests list to CSV download.
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        items = list(queryset)
+        self._attach_participant_details(items)
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename="invited_guests_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow([
+            'Invited Name', 'Email', 'Mobile', 'Co-hort', 'Invited Session',
+            'Registered?', 'Summit ID', 'Registration Status', 'Guest Type',
+            'Day 1 Checked In', 'Day 2 Checked In'
+        ])
+
+        for g in items:
+            writer.writerow([
+                g.name,
+                g.email,
+                g.number,
+                g.cohort,
+                g.session,
+                'Yes' if getattr(g, 'is_registered', False) else 'No',
+                getattr(g, 'registered_summit_id', '') or '',
+                getattr(g, 'registered_status', '') or '',
+                getattr(g, 'registered_guest_type', '') or '',
+                'Yes' if getattr(g, 'day1_checked_in', False) else 'No',
+                'Yes' if getattr(g, 'day2_checked_in', False) else 'No',
+            ])
+
+        return response

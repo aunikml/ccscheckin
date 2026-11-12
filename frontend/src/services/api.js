@@ -224,5 +224,29 @@ export const usersService = {
   },
 };
 
+export const invitedGuestsService = {
+  lookup: async (query) => {
+    const response = await api.get('/invited-guests/lookup/', { params: { q: query } });
+    return response.data;
+  },
+  getAll: async (params = {}) => {
+    const response = await api.get('/invited-guests/', { params });
+    return response.data;
+  },
+  getStats: async () => {
+    const response = await api.get('/invited-guests/stats/');
+    return response.data;
+  },
+  syncSheet: async (sheetUrl) => {
+    const response = await api.post('/invited-guests/sync_sheet/', { sheet_url: sheetUrl });
+    return response.data;
+  },
+  exportCsv: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    const url = `/invited-guests/export_csv/${query ? `?${query}` : ''}`;
+    return participantsService.downloadExport(url, 'invited_guests_reference.csv');
+  },
+};
+
 export default api;
 

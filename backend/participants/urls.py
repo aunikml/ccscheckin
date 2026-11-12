@@ -4,11 +4,13 @@ from .views import (
     ParticipantViewSet,
     GoogleSheetConfigView,
     TriggerSyncView,
-    SyncHistoryListView
+    SyncHistoryListView,
+    InvitedGuestViewSet,
 )
 
 router = DefaultRouter()
 router.register(r'participants', ParticipantViewSet, basename='participant')
+router.register(r'invited-guests', InvitedGuestViewSet, basename='invited-guest')
 
 urlpatterns = [
     path('', include(router.urls)),
