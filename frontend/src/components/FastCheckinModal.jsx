@@ -28,7 +28,6 @@ import {
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import PrintIcon from '@mui/icons-material/Print';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -46,7 +45,7 @@ const GUEST_TYPE_COLORS = {
   'Organizer / Crew': '#1e824c',
 };
 
-export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge }) => {
+export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, _onPrintBadge }) => {
   const [query, setQuery] = useState('');
   const [selectedDay, setSelectedDay] = useState('1'); // '1' or '2'
   const [suggestions, setSuggestions] = useState([]);
@@ -268,7 +267,7 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
           </Box>
           <Box>
             <Typography variant="subtitle1" fontWeight="900" sx={{ color: '#0f172a', lineHeight: 1.2 }}>
-              Fast-Track Check-in & Badge Desk
+              Fast-Track Check-in Desk
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Search attendee or scan Summit ID to accredit immediately
@@ -676,7 +675,7 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                       Already Checked In for Day {selectedDay}
                     </Typography>
                     <Typography variant="caption" display="block">
-                      Accredited{selectedTimestamp ? ` at ${selectedTimestamp}` : ''}. You may re-confirm or re-print badge below.
+                      Accredited{selectedTimestamp ? ` at ${selectedTimestamp}` : ''}.
                     </Typography>
                   </Alert>
                 ) : (
@@ -717,53 +716,33 @@ export const FastCheckinModal = ({ open, onClose, onCheckinSuccess, onPrintBadge
                   </Alert>
                 )}
 
-                {/* Primary Action Button: Large Confirm Check-In */}
-                <Button
-                  fullWidth
-                  variant="contained"
-                  size="large"
-                  startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <HowToRegIcon />}
-                  onClick={handleCheckin}
-                  disabled={loading}
-                  sx={{
-                    py: 1.4,
-                    fontWeight: 900,
-                    fontSize: '0.98rem',
-                    borderRadius: 2.5,
-                    boxShadow: '0 4px 14px 0 rgba(0,0,0,0.15)',
-                    bgcolor: isSelectedAlreadyCheckedIn ? '#d97706' : activeDayColor,
-                    '&:hover': {
-                      bgcolor: isSelectedAlreadyCheckedIn ? '#b45309' : (selectedDay === '1' ? '#1e68a3' : '#3b0d2d'),
-                    },
-                  }}
-                >
-                  {isSelectedAlreadyCheckedIn
-                    ? `Re-confirm Day ${selectedDay} Check-In`
-                    : `Confirm Day ${selectedDay} Check-In`}
-                </Button>
+                {/* Primary Action Button: Confirm Check-In */}
+                {!isSelectedAlreadyCheckedIn && (
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    size="large"
+                    startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <HowToRegIcon />}
+                    onClick={handleCheckin}
+                    disabled={loading}
+                    sx={{
+                      py: 1.4,
+                      fontWeight: 900,
+                      fontSize: '0.98rem',
+                      borderRadius: 2.5,
+                      boxShadow: '0 4px 14px 0 rgba(0,0,0,0.15)',
+                      bgcolor: activeDayColor,
+                      '&:hover': {
+                        bgcolor: selectedDay === '1' ? '#1e68a3' : '#3b0d2d',
+                      },
+                    }}
+                  >
+                    Confirm Day {selectedDay} Check-In
+                  </Button>
+                )}
 
-                {/* Secondary Action Row: Print Badge + Next Attendee */}
-                <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                  {onPrintBadge && (
-                    <Button
-                      fullWidth
-                      variant="outlined"
-                      size="small"
-                      startIcon={<PrintIcon fontSize="small" />}
-                      onClick={() => onPrintBadge(selectedParticipant)}
-                      sx={{
-                        py: 0.8,
-                        fontWeight: 700,
-                        fontSize: '0.8rem',
-                        borderColor: '#cbd5e1',
-                        color: '#334155',
-                        '&:hover': { borderColor: '#50153f', color: '#50153f' },
-                      }}
-                    >
-                      Print Badge
-                    </Button>
-                  )}
-
+                {/* Action Row: Next Attendee */}
+                <Box sx={{ mt: !isSelectedAlreadyCheckedIn ? 1 : 0 }}>
                   <Button
                     fullWidth
                     variant="outlined"
