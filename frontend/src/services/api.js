@@ -59,6 +59,18 @@ export const authService = {
   },
 };
 
+const buildCleanQuery = (params = {}) => {
+  const token = localStorage.getItem('access_token');
+  const clean = {};
+  for (const [key, val] of Object.entries(params)) {
+    if (val !== undefined && val !== null && val !== '' && val !== 'undefined' && val !== 'null') {
+      clean[key] = val;
+    }
+  }
+  if (token) clean.token = token;
+  return new URLSearchParams(clean).toString();
+};
+
 export const participantsService = {
   getAll: async (params = {}) => {
     const response = await api.get('/participants/', { params });
@@ -110,31 +122,19 @@ export const participantsService = {
     return response.data;
   },
   getExportUrl: (params = {}) => {
-    const token = localStorage.getItem('access_token');
-    const allParams = { ...params };
-    if (token) allParams.token = token;
-    const query = new URLSearchParams(allParams).toString();
+    const query = buildCleanQuery(params);
     return `/participants/export_csv/${query ? `?${query}` : ''}`;
   },
   getCheckinExportUrl: (params = {}) => {
-    const token = localStorage.getItem('access_token');
-    const allParams = { ...params };
-    if (token) allParams.token = token;
-    const query = new URLSearchParams(allParams).toString();
+    const query = buildCleanQuery(params);
     return `/participants/export_checkin_csv/${query ? `?${query}` : ''}`;
   },
   getDirectExportUrl: (params = {}) => {
-    const token = localStorage.getItem('access_token');
-    const allParams = { ...params };
-    if (token) allParams.token = token;
-    const query = new URLSearchParams(allParams).toString();
+    const query = buildCleanQuery(params);
     return `/api/participants/export_csv/${query ? `?${query}` : ''}`;
   },
   getDirectCheckinExportUrl: (params = {}) => {
-    const token = localStorage.getItem('access_token');
-    const allParams = { ...params };
-    if (token) allParams.token = token;
-    const query = new URLSearchParams(allParams).toString();
+    const query = buildCleanQuery(params);
     return `/api/participants/export_checkin_csv/${query ? `?${query}` : ''}`;
   },
   downloadExport: async (url, defaultFilename = 'summit_export.csv') => {
@@ -242,7 +242,7 @@ export const invitedGuestsService = {
     return response.data;
   },
   exportCsv: async (params = {}) => {
-    const query = new URLSearchParams(params).toString();
+    const query = buildCleanQuery(params);
     const url = `/invited-guests/export_csv/${query ? `?${query}` : ''}`;
     return participantsService.downloadExport(url, 'invited_guests_reference.csv');
   },

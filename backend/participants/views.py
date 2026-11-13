@@ -44,6 +44,22 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         checkin_filter = self.request.query_params.get('checkin_filter', '').strip().upper()
         status_param = self.request.query_params.get('status', '').strip()
 
+        # Sanitize against frontend passing 'undefined' or 'null' as string
+        if search.lower() in ('undefined', 'null'):
+            search = ''
+        if guest_type.lower() in ('undefined', 'null', 'all'):
+            guest_type = ''
+        if confirmation.lower() in ('undefined', 'null', 'all'):
+            confirmation = ''
+        if session.lower() in ('undefined', 'null', 'all'):
+            session = ''
+        if session_filter in ('UNDEFINED', 'NULL', 'ALL'):
+            session_filter = ''
+        if checkin_filter in ('UNDEFINED', 'NULL', 'ALL'):
+            checkin_filter = ''
+        if status_param.lower() in ('undefined', 'null', 'all'):
+            status_param = ''
+
         if search:
             qs = qs.filter(
                 Q(name__icontains=search) |
@@ -554,6 +570,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Exporting check-in reports requires Admin or Registration Host privileges.'}, status=status.HTTP_403_FORBIDDEN)
 
         day_param = request.query_params.get('day', 'all').lower()
+        if day_param in ('undefined', 'null'):
+            day_param = 'all'
+
         only_checked_in = request.query_params.get('only_checked_in', 'false').lower() in ('true', '1', 'yes')
 
         queryset = self.get_queryset()
@@ -561,14 +580,24 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         if day_param == '1':
             if only_checked_in:
                 queryset = queryset.filter(day1_checked_in=True)
+            else:
+                queryset = queryset.filter(Q(day1_session1=True) | Q(day1_session2=True))
             filename = f"summit_day1_checkin_report_{timezone.now().strftime('%Y%m%d_%H%M%S')}.csv"
         elif day_param == '2':
             if only_checked_in:
                 queryset = queryset.filter(day2_checked_in=True)
+            else:
+                queryset = queryset.filter(Q(day2_session1=True) | Q(day2_session2=True))
             filename = f"summit_day2_checkin_report_{timezone.now().strftime('%Y%m%d_%H%M%S')}.csv"
         elif day_param == 'both':
             if only_checked_in:
                 queryset = queryset.filter(day1_checked_in=True, day2_checked_in=True)
+            else:
+                queryset = queryset.filter(
+                    Q(day1_session1=True) | Q(day1_session2=True)
+                ).filter(
+                    Q(day2_session1=True) | Q(day2_session2=True)
+                )
             filename = f"summit_both_days_checkin_report_{timezone.now().strftime('%Y%m%d_%H%M%S')}.csv"
         else:
             if only_checked_in:

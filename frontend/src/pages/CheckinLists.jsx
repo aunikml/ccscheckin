@@ -23,6 +23,8 @@ import {
   TextField,
   Tooltip,
   Typography,
+  Menu,
+  MenuItem,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -30,6 +32,7 @@ import BadgeIcon from '@mui/icons-material/Badge';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import UndoIcon from '@mui/icons-material/Undo';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import { useAuth } from '../context/AuthContext';
 import { participantsService } from '../services/api';
 import { ParticipantBadgeModal } from '../components/ParticipantBadgeModal';
@@ -85,6 +88,7 @@ export const CheckinLists = () => {
   const [stats, setStats] = useState(null);
   const [badgeParticipant, setBadgeParticipant] = useState(null);
   const [exportLoading, setExportLoading] = useState(false);
+  const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
   const [toast, setToast] = useState({ open: false, message: '', severity: 'info' });
 
   const meta = DAY_META[day];
@@ -159,21 +163,29 @@ export const CheckinLists = () => {
     }
   };
 
-  const handleExport = async () => {
-    if (!canExportReports) return;
+  const handleExportCheckedIn = async () => {
+    setExportMenuAnchor(null);
+    if (dayCheckedIn === 0) {
+      setToast({
+        open: true,
+        message: `No participants have checked in for ${meta.label} yet.`,
+        severity: 'info',
+      });
+      return;
+    }
     setExportLoading(true);
     try {
       await participantsService.downloadExport(
         participantsService.getCheckinExportUrl({
           day: meta.exportDay,
           only_checked_in: 'true',
-          search: search.trim() || undefined,
+          search: search.trim() ? search.trim() : undefined,
         }),
-        `summit_day${meta.exportDay}_checkin_report.csv`
+        `summit_day${meta.exportDay}_checkedin_report.csv`
       );
       setToast({
         open: true,
-        message: `Day ${meta.exportDay} check-in report downloaded successfully.`,
+        message: `${meta.label} checked-in report downloaded successfully.`,
         severity: 'success',
       });
     } catch (err) {
@@ -187,6 +199,62 @@ export const CheckinLists = () => {
           : err.response?.status === 401
           ? 'Session expired. Please log in again.'
           : 'Failed to download CSV export. Please check connection and try again.');
+      setToast({ open: true, message: msg, severity: 'error' });
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleExportRegistered = async () => {
+    setExportMenuAnchor(null);
+    setExportLoading(true);
+    try {
+      await participantsService.downloadExport(
+        participantsService.getCheckinExportUrl({
+          day: meta.exportDay,
+          only_checked_in: 'false',
+          search: search.trim() ? search.trim() : undefined,
+        }),
+        `summit_day${meta.exportDay}_registered_roster.csv`
+      );
+      setToast({
+        open: true,
+        message: `${meta.label} registered roster downloaded successfully (${dayRegistered} attendees).`,
+        severity: 'success',
+      });
+    } catch (err) {
+      console.error('Export failed', err);
+      const msg =
+        err.parsedMessage ||
+        err.response?.data?.error ||
+        err.response?.data?.detail ||
+        'Failed to download CSV export. Please check connection and try again.';
+      setToast({ open: true, message: msg, severity: 'error' });
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleExportAllCheckins = async () => {
+    setExportMenuAnchor(null);
+    setExportLoading(true);
+    try {
+      await participantsService.downloadExport(
+        participantsService.getCheckinExportUrl({ day: 'all' }),
+        'summit_all_checkins_report.csv'
+      );
+      setToast({
+        open: true,
+        message: 'Full summit check-in report downloaded successfully.',
+        severity: 'success',
+      });
+    } catch (err) {
+      console.error('Export failed', err);
+      const msg =
+        err.parsedMessage ||
+        err.response?.data?.error ||
+        err.response?.data?.detail ||
+        'Failed to download CSV export.';
       setToast({ open: true, message: msg, severity: 'error' });
     } finally {
       setExportLoading(false);
@@ -223,19 +291,41 @@ export const CheckinLists = () => {
         </Box>
 
         {canExportReports && (
-          <Button
-            variant="contained"
-            disabled={exportLoading}
-            startIcon={exportLoading ? <CircularProgress size={18} color="inherit" /> : <DownloadIcon />}
-            onClick={handleExport}
-            sx={{
-              fontWeight: 700,
-              bgcolor: meta.color,
-              '&:hover': { bgcolor: meta.color, filter: 'brightness(0.92)' },
-            }}
-          >
-            {exportLoading ? 'Exporting...' : `Export ${meta.label} Check-ins`}
-          </Button>
+          <>
+            <Button
+              variant="contained"
+              disabled={exportLoading}
+              startIcon={exportLoading ? <CircularProgress size={18} color="inherit" /> : <DownloadIcon />}
+              endIcon={<ArrowDropDownIcon />}
+              onClick={(e) => setExportMenuAnchor(e.currentTarget)}
+              sx={{
+                fontWeight: 700,
+                bgcolor: meta.color,
+                '&:hover': { bgcolor: meta.color, filter: 'brightness(0.92)' },
+              }}
+            >
+              {exportLoading ? 'Exporting...' : `Export ${meta.label} CSV`}
+            </Button>
+            <Menu
+              anchorEl={exportMenuAnchor}
+              open={Boolean(exportMenuAnchor)}
+              onClose={() => setExportMenuAnchor(null)}
+              PaperProps={{ sx: { minWidth: 260, borderRadius: 2, mt: 1 } }}
+            >
+              <MenuItem onClick={handleExportCheckedIn}>
+                <EventAvailableIcon fontSize="small" sx={{ mr: 1.5, color: meta.color }} />
+                Export Checked-In Only ({dayCheckedIn})
+              </MenuItem>
+              <MenuItem onClick={handleExportRegistered}>
+                <DownloadIcon fontSize="small" sx={{ mr: 1.5, color: 'text.secondary' }} />
+                Export Full {meta.label} Roster ({dayRegistered})
+              </MenuItem>
+              <MenuItem onClick={handleExportAllCheckins}>
+                <DownloadIcon fontSize="small" sx={{ mr: 1.5, color: 'text.secondary' }} />
+                Export All Check-ins (Both Days)
+              </MenuItem>
+            </Menu>
+          </>
         )}
       </Box>
 
